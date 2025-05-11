@@ -1,19 +1,13 @@
 <template>
   <div>
-    <div
-      class="sticky top-0 z-30 flex h-16 w-full justify-center bg-opacity-90 backdrop-blur bg-base-100 text-base-content border-b border-slate-800/10">
-      <nav class="navbar px-2 w-full flex items-center">
-        <a href="/" aria-current="page" aria-label="Homepage" class="font-title inline-flex text-lg">
-          <span class="capitalize">Nuxt</span>
-          <span class="uppercase font-bold text-blue-500">OCR</span>
-        </a>
-      </nav>
-    </div>
-
+    <Header />
     <div class="flex flex-col my-16 mx-8 gap-8 md:flex-row md:justify-center md:items-start">
-      <div @dragover.prevent @drop.prevent="handleDrop"
+      <div
+        @dragover.prevent
+        @drop.prevent="handleDrop"
         class="md:w-1/2 flex flex-col items-center justify-center border-2 border-dashed border-blue-100 hover:border-blue-500 rounded-xl p-8 cursor-pointer"
-        @click="triggerFileInput">
+        @click="triggerFileInput"
+      >
         <input type="file" ref="fileInput" class="hidden" accept="image/*" @change="handleFileChange" />
         <div v-if="imageUrl">
           <img :src="imageUrl" alt="Uploaded Image" class="max-w-full max-h-96 object-contain rounded-lg shadow" />
@@ -34,62 +28,65 @@
 </template>
 
 <script>
-import { ref, watch } from 'vue'
-import Tesseract from 'tesseract.js'
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { createWorker } from 'tesseract.js'
 
 export default {
   name: 'ImageUploadOCR',
   setup() {
     const fileInput = ref(null)
     const imageUrl = ref(null)
-    const imageFile = ref(null)
     const ocrText = ref('')
     const isScanning = ref(false)
+    let worker = null
 
-    const triggerFileInput = () => {
-      fileInput.value.click()
+    const initWorker = async () => {
+      worker = await createWorker()
+      await worker.loadLanguage('eng')
+      await worker.initialize('eng')
     }
 
-    const handleFileChange = (event) => {
-      const file = event.target.files[0]
-      if (file) {
-        imageUrl.value = URL.createObjectURL(file)
-        imageFile.value = file
+    const terminateWorker = async () => {
+      if (worker) {
+        await worker.terminate()
+        worker = null
       }
     }
 
-    const handleDrop = (event) => {
-      const file = event.dataTransfer.files[0]
-      if (file) {
-        imageUrl.value = URL.createObjectURL(file)
-        imageFile.value = file
-      }
+    const triggerFileInput = () => fileInput.value?.click()
+
+    const handleFile = (file) => {
+      if (!file) return
+      imageUrl.value = URL.createObjectURL(file)
     }
+
+    const handleFileChange = (event) => handleFile(event.target.files[0])
+    const handleDrop = (event) => handleFile(event.dataTransfer.files[0])
 
     const performOCR = async () => {
-      if (!imageFile.value) return
+      if (!imageUrl.value || !worker) return
       isScanning.value = true
       ocrText.value = ''
       try {
-        const result = await Tesseract.recognize(imageFile.value, 'eng', {
-          logger: m => console.log(m)
-        })
-        ocrText.value = result.data.text
-      } catch (err) {
+        const { data: { text } } = await worker.recognize(imageUrl.value)
+        ocrText.value = text
+      } catch {
         ocrText.value = 'Error recognizing text'
       } finally {
         isScanning.value = false
       }
     }
 
-    watch(imageFile, () => {
-      if (imageFile.value) performOCR()
+    watch(imageUrl, () => {
+      if (imageUrl.value) performOCR()
     })
+
+    onMounted(() => initWorker())
+    onBeforeUnmount(() => terminateWorker())
 
     return {
       fileInput,
       imageUrl,
-      imageFile,
       ocrText,
       isScanning,
       triggerFileInput,
